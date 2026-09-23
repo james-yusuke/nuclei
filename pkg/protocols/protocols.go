@@ -22,6 +22,7 @@ import (
 	"github.com/projectdiscovery/nuclei/v3/pkg/loader/parser"
 	"github.com/projectdiscovery/nuclei/v3/pkg/model"
 	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
+	llmclient "github.com/projectdiscovery/nuclei/v3/pkg/operators/common/llm"
 	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
 	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
 	"github.com/projectdiscovery/nuclei/v3/pkg/output"
@@ -81,6 +82,10 @@ type ExecutorOptions struct {
 	// Verified reports whether a trusted verifier verified the template's
 	// signature. Code and JavaScript protocols check it at execution time.
 	Verified bool
+	// LLMClient is the scan's llm client, injected into llm matchers and
+	// extractors when a request compiles. Nil unless -llm is set, which makes
+	// those operators fail closed.
+	LLMClient llmclient.Client
 	// TemplateVerificationCallback returns cached verification info for a template path.
 	// If it returns nil, verification should be computed normally.
 	TemplateVerificationCallback func(templatePath string) *TemplateVerification
@@ -160,6 +165,21 @@ type ExecutorOptions struct {
 	CustomFastdialer *fastdialer.Dialer
 	// ClusterMappings stores cluster ID to template IDs mapping during execution
 	ClusterMappings *templateTypes.ClusterMappingsMap
+	// TargetScope narrows the templates run on each target (per-target profiles)
+	TargetScope TargetScope
+}
+
+// TargetScope resolves the template selection that applies to a target.
+type TargetScope interface {
+	// For returns the selection for input, or nil when every template applies.
+	For(input *contextargs.MetaInput) TemplateSelection
+}
+
+// TemplateSelection decides which templates run on a target. Implementations
+// must be comparable, such as pointers, since targets are grouped by selection.
+type TemplateSelection interface {
+	// Allows reports whether the template loaded from templatePath is selected.
+	Allows(templatePath string) bool
 }
 
 // RegisterInteractshRequest attaches execution-local output dependencies before
@@ -321,6 +341,7 @@ func (e *ExecutorOptions) Copy() *ExecutorOptions {
 		TemplateInfo:                 e.TemplateInfo,
 		TemplateVerifier:             e.TemplateVerifier,
 		Verified:                     e.Verified,
+		LLMClient:                    e.LLMClient,
 		TemplateVerificationCallback: e.TemplateVerificationCallback,
 		RawTemplate:                  e.RawTemplate,
 		Output:                       e.Output,
@@ -356,6 +377,7 @@ func (e *ExecutorOptions) Copy() *ExecutorOptions {
 		ExportReqURLPattern:          e.ExportReqURLPattern,
 		GlobalMatchers:               e.GlobalMatchers,
 		Logger:                       e.Logger,
+		TargetScope:                  e.TargetScope,
 	}
 	copy.ClusterMappings = e.ClusterMappings.Copy()
 	copy.CreateTemplateCtxStore()
